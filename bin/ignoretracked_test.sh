@@ -187,7 +187,7 @@ else
     "expected rc=1, ::error::, and the configured ceiling, got rc=$status"
 fi
 
-runGate "$blockedRepo"
+runGate "$blockedRepo" -u IGNORETRACKED_MAX_MB
 if [ "$status" -eq 0 ] \
   && grep -Fq -- "ignoretracked: 1 tracked file(s), 2.0 MB" <<<"$output" \
   && grep -Fq -- "ignoretracked: OK — 2.0 MB is under the 100 MB ceiling" <<<"$output"; then
