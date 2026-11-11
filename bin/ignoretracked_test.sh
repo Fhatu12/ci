@@ -4,8 +4,63 @@
 set -uo pipefail
 
 BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ignoretracked
-tmpRoot=$(mktemp -d)
-trap 'rm -rf "$tmpRoot"' EXIT
+tmpRoot=
+tmpRootPhysical=
+tmpRootIdentity=
+
+cleanup() {
+  local currentIdentity currentPhysical
+  [ -n "$tmpRootPhysical" ] && [ "$tmpRootPhysical" != "/" ] || return 0
+  [ -d "$tmpRootPhysical" ] && [ ! -L "$tmpRootPhysical" ] && [ -O "$tmpRootPhysical" ] || return 0
+  currentPhysical=$(cd -- "$tmpRootPhysical" && pwd -P) || return 0
+  [ "$currentPhysical" = "$tmpRootPhysical" ] || return 0
+  currentIdentity=$(stat -Lc '%d:%i:%u:%a' -- "$tmpRootPhysical") || return 0
+  [ -n "$tmpRootIdentity" ] && [ "$currentIdentity" = "$tmpRootIdentity" ] || return 0
+  rm -rf -- "$tmpRootPhysical"
+}
+
+tmpBase=${TMPDIR:-/tmp}
+tmpBasePhysical=$(cd -- "$tmpBase" 2>/dev/null && pwd -P) || {
+  echo "ignoretracked_test: cannot access temporary-directory base: $tmpBase" >&2
+  exit 1
+}
+if [ "$tmpBasePhysical" = "/" ]; then
+  echo "ignoretracked_test: refusing to use the filesystem root as the temporary-directory base" >&2
+  exit 1
+fi
+if ! tmpRoot=$(mktemp -d); then
+  echo "ignoretracked_test: failed to create a temporary directory under: $tmpBasePhysical" >&2
+  exit 1
+fi
+if [ -z "$tmpRoot" ] || [ ! -d "$tmpRoot" ] || [ -L "$tmpRoot" ] || [ ! -O "$tmpRoot" ]; then
+  echo "ignoretracked_test: temporary-directory allocator returned an invalid or unowned directory" >&2
+  exit 1
+fi
+tmpRootPhysical=$(cd -- "$tmpRoot" && pwd -P) || {
+  echo "ignoretracked_test: failed to resolve the allocated temporary directory" >&2
+  exit 1
+}
+if [ "$tmpRootPhysical" = "/" ] || [ "$(dirname -- "$tmpRootPhysical")" != "$tmpBasePhysical" ]; then
+  echo "ignoretracked_test: allocated temporary directory is outside the expected base" >&2
+  exit 1
+fi
+if [ -n "$(find "$tmpRootPhysical" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "ignoretracked_test: allocated temporary directory is not empty" >&2
+  exit 1
+fi
+tmpRootIdentity=$(stat -Lc '%d:%i:%u:%a' -- "$tmpRootPhysical") || {
+  echo "ignoretracked_test: failed to verify the allocated temporary directory" >&2
+  exit 1
+}
+case "$tmpRootIdentity" in
+  *:700) ;;
+  *)
+    echo "ignoretracked_test: allocated temporary directory does not have private permissions" >&2
+    exit 1
+    ;;
+esac
+readonly tmpRoot tmpRootPhysical tmpRootIdentity
+trap cleanup EXIT
 pass=0
 fail=0
 output=
